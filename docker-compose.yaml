@@ -1,0 +1,4 @@
+version: '3'
+services:
+  dag_pipeline:
+    image: dag_pipeline:latest  
