@@ -6,17 +6,18 @@ import (
 	"sync"
 )
 
-// this is a DAG. We have arrows pointing towards us. So that is our incoming vertex
-// to which we would be outgoing
-
+/*
+ This is a DAG. We have arrows pointing towards us. So that is our incoming vertex
+ to which we would be outgoing.
+*/
 type Vertex struct {
 	name   string
 	weight int
-	// my current level (depth) is the MAX LEVEL of my outgoing vertex/connections + 1
+	// My current level (depth) is the MAX LEVEL of my outgoing vertex/connections + 1.
 	level int
-	// incoming vertices to this
+	// Incoming vertices to us.
 	incoming []*Vertex
-	// outgoing vertices from this
+	// Outgoing vertices from us.
 	outgoing    []*Vertex
 	incomingMap map[string]struct{}
 	outgoingMap map[string]struct{}
@@ -32,6 +33,13 @@ type Pipeline struct {
 type PipelineOp struct {
 	Name          string
 	WaitPipelines []string
+}
+
+type PipelineConfig struct {
+	Name    string
+	Inputs  []string
+	Outputs []string
+	Weight  int
 }
 
 type path struct {
@@ -63,8 +71,8 @@ func (v *Vertex) getLevel() int {
 	return v.level
 }
 
+// Update the level if its greater than current level.
 func (v *Vertex) setLevel(level int) bool {
-	// update the level if its greater than current level
 	if v.level < level {
 		v.level = level
 		return true
@@ -72,27 +80,40 @@ func (v *Vertex) setLevel(level int) bool {
 	return false
 }
 
-func New() *Pipeline {
+func New(config []PipelineConfig) (*Pipeline, error) {
 	pipeline := &Pipeline{verticesMap: make(map[string]*Vertex), pipelineMap: make(map[string][]string), pipelineOutputsMap: make(map[string][]string)}
-	return pipeline
+	// Configure the outputs.
+	for _, c := range config {
+		if err := pipeline.SetOutputs(c.Name, c.Outputs); err != nil {
+			return nil, err
+		}
+	}
+	// Connect the pipelines.
+	for _, c := range config {
+		if err := pipeline.Add(c.Name, c.Inputs, c.Outputs, c.Weight); err != nil {
+			return nil, err
+		}
+	}
+	return pipeline, nil
 }
 
+// Configure the outputs for the pipeline.
 func (p *Pipeline) SetOutputs(pipeline string, outputs []string) error {
 	for _, o := range outputs {
-		if err := p.addOutputToPipeline(pipeline, o); err != nil {
+		if err := p.addPipelineToOutput(pipeline, o); err != nil {
 			return err
 		}
 	}
-	// add self to the map
-	if err := p.addOutputToPipeline(pipeline, pipeline); err != nil {
+	// Add ourselves to the map.
+	if err := p.addPipelineToOutput(pipeline, pipeline); err != nil {
 		return err
 	}
 	p.pipelineOutputsMap[pipeline] = outputs
 	return nil
 }
 
-// fork the output in case its connected to multiple pipelines
-func (p *Pipeline) addOutputToPipeline(newPipeline string, output string) error {
+// Fork the output in case its connected to multiple pipelines.
+func (p *Pipeline) addPipelineToOutput(newPipeline string, output string) error {
 	if _, ok := p.pipelineMap[output]; ok {
 		for _, pipeline := range p.pipelineMap[output] {
 			if pipeline == newPipeline {
@@ -116,7 +137,7 @@ func (p *Pipeline) GetPipelines(inputs []string) ([]string, error) {
 				}
 			}
 		} else {
-			return nil, fmt.Errorf("No pipeline registered for input %s", i)
+			return nil, fmt.Errorf("no pipeline registered for input %s", i)
 		}
 	}
 	return pipelines, nil
@@ -140,7 +161,7 @@ func (p *Pipeline) checkIncomingVerticesForLoop(vertex *Vertex, loopDetect func(
 	return nil
 }
 
-// recursively update the levels of all our incoming connections
+// Recursively update the levels of all our incoming connections.
 func (p *Pipeline) updateLevel(vertex *Vertex, visitedMap map[string]struct{}) {
 	if _, ok := visitedMap[vertex.name]; ok {
 		return
@@ -163,14 +184,14 @@ func (p *Pipeline) connect(from string, to string, weight int) error {
 		p.verticesMap[to] = newVertex(to, 0)
 	}
 	toVertex := p.verticesMap[to]
-	// update the weight of the from vertex if different
+	// Update the weight of the from vertex if different.
 	if fromVertex.weight != weight {
 		fromVertex.weight = weight
 	}
-	// ensure there are no loops
+	// Ensure there are no loops.
 	loopDetect := func(v *Vertex, path []string) error {
 		if v.name == to {
-			return fmt.Errorf("Loop detected as vertex %s is already incoming vertex to %s on path %v", v.name, from, path)
+			return fmt.Errorf("loop detected as vertex %s is already incoming vertex to %s on path %v", v.name, from, path)
 		}
 		return nil
 	}
@@ -182,7 +203,7 @@ func (p *Pipeline) connect(from string, to string, weight int) error {
 	toVertex.addIncoming(fromVertex)
 	fromVertex.addOutgoing(toVertex)
 
-	// update the level of from vertex to be the (max) level of our TO vertex + 1
+	// Update the level of  from_vertex to be the (max) level of our to_vertex + 1.
 	level := toVertex.getLevel() + 1
 
 	if fromVertex.setLevel(level) {
@@ -200,13 +221,12 @@ func (p *Pipeline) connectInputOutput(pipeline string, inputs []string, outputs 
 		return err
 	}
 
-	// connect the outputs to the inputs
-	// we don't need this as edges are fetched using pipeline names mapped to the outputs
-	// but this allows us to trace the edges using output field names as well (in case)
-	// this is purely there for GetByField
+	// Connect the outputs to the inputs.
+	// This is purely there for GetByField as edges are fetched using pipeline names mapped to the outputs.
+	// This allows us to trace the edges using field names (in case).
 	for _, o := range outputs {
-		// check if there is a pipeline registered and connected for this output
-		// if yes, connect our pipeline to the input fields
+		// Check if there is a pipeline registered and connected for this output.
+		// If yes, connect our pipeline to the input fields.
 		if pipelines, ok := p.pipelineMap[o]; ok {
 			if len(pipelines) > 1 {
 				if vertex, ok := p.verticesMap[o]; ok && len(vertex.outgoing) > 0 {
@@ -221,7 +241,7 @@ func (p *Pipeline) connectInputOutput(pipeline string, inputs []string, outputs 
 		}
 	}
 
-	// connect the pipelines to the inputs
+	// Connect the pipelines to the inputs.
 	inputPipelines, err := p.GetPipelines(inputs)
 	if err != nil {
 		return err
@@ -261,15 +281,14 @@ func (p *Pipeline) getOutputs(pipeline string) map[string]path {
 	return nil
 }
 
-// convert the connections map by vertex name and level into an array of pipelines sorted by level
+// Convert the connections map by vertex name and level into an array of pipelines sorted by level.
 func (p *Pipeline) connectionsToPipelinesByLevel(connections map[string]path) [][]string {
-	// make them into path array so we can sort by level
 	var ss []path
 	for _, p := range connections {
 		ss = append(ss, p)
 	}
 	sort.Slice(ss, func(i, j int) bool {
-		// if levels are same, sort by weight
+		// If levels are same, sort by weight.
 		if ss[i].level == ss[j].level {
 			return ss[i].weight < ss[j].weight
 		}
@@ -289,18 +308,13 @@ func (p *Pipeline) connectionsToPipelinesByLevel(connections map[string]path) []
 	return pipelines
 }
 
-// get all the connected outputs from this pipeline and sort by level
-func (p *Pipeline) Get(pipeline string) [][]string {
-	p.Lock()
-	defer p.Unlock()
+func (p *Pipeline) getNoLock(pipeline string) [][]string {
 	var connections = map[string]path{}
 	if names, ok := p.pipelineMap[pipeline]; ok {
 		for _, name := range names {
 			outputConnections := p.getOutputs(name)
 			if outputConnections != nil {
-				// merge into connections
-				// we save by pipeline names as they will be the same in case
-				// we have multiple pipelines serving same output
+				// Merge into connections by pipeline names.
 				for k, v := range outputConnections {
 					if pipelines, ok := p.pipelineMap[k]; ok {
 						for _, name := range pipelines {
@@ -317,6 +331,13 @@ func (p *Pipeline) Get(pipeline string) [][]string {
 	return p.connectionsToPipelinesByLevel(connections)
 }
 
+// Get all the connected outputs from this pipeline and sort by level.
+func (p *Pipeline) Get(pipeline string) [][]string {
+	p.Lock()
+	defer p.Unlock()
+	return p.getNoLock(pipeline)
+}
+
 func (p *Pipeline) GetByField(field string) [][]string {
 	p.Lock()
 	if pipelines, ok := p.pipelineMap[field]; ok && len(pipelines) > 1 {
@@ -331,30 +352,27 @@ func (p *Pipeline) GetByField(field string) [][]string {
 	return p.connectionsToPipelinesByLevel(connections)
 }
 
-// convert the pipelines sorted by levels into operations that can be used to execute the pipeline concurrently
-func (p *Pipeline) PipelinesByLevelToOperations(pipelines [][]string) []PipelineOp {
-	p.Lock()
-	defer p.Unlock()
+func (p *Pipeline) pipelinesByLevelToOperationsNoLock(pipelines [][]string) []PipelineOp {
 	pipelineOperations := []PipelineOp{}
 	if pipelines == nil {
 		return pipelineOperations
 	}
 	for level, pipeline := range pipelines {
 		if level == 0 {
-			// nothing to wait.
+			// Nothing to wait.
 			for _, name := range pipeline {
 				pipelineOperations = append(pipelineOperations, PipelineOp{Name: name})
 			}
 		} else {
-			//build waitpipeline to wait on outgoing edges before executing pipeline
+			// Build waitpipeline to wait on outgoing edges before executing pipeline.
 			multiplePipelineForSameOutput := map[string][]string{}
 			for index, name := range pipeline {
-				// check if there are multiple pipelines attached to same output
-				// if yes, we ensure that the one with the highest weight/precedence is executed last to update the output
+				// Check if there are multiple pipelines attached to same output.
+				// If yes, we ensure that the one with the highest weight/precedence is executed last to update the output.
 				if outputs, ok := p.pipelineOutputsMap[name]; ok {
 					for _, o := range outputs {
 						if outputPipelines, ok := p.pipelineMap[o]; ok && len(outputPipelines) > 1 {
-							// add ourselves to the map of others
+							// Add ourselves to the map of others.
 							for _, op := range outputPipelines {
 								if op != name {
 									multiplePipelineForSameOutput[op] = append(multiplePipelineForSameOutput[op], name)
@@ -373,13 +391,11 @@ func (p *Pipeline) PipelinesByLevelToOperations(pipelines [][]string) []Pipeline
 						waitPipelines = append(waitPipelines, out)
 					}
 				}
-				// check same output multiple pipeline map for wait pipelines
-				// we wait for lower precedence on same output so that the last update on output is from a higher precedence
+				// Check same output multiple pipeline map for wait pipelines.
+				// We wait for lower precedence on same output so that the last update on output is from a higher precedence.
 				if index != 0 {
 					if waitsForSameOutput, ok := multiplePipelineForSameOutput[name]; ok {
-						for _, waitPipeline := range waitsForSameOutput {
-							waitPipelines = append(waitPipelines, waitPipeline)
-						}
+						waitPipelines = append(waitPipelines, waitsForSameOutput...)
 					}
 				}
 				pipelineOperations = append(pipelineOperations, PipelineOp{Name: name, WaitPipelines: waitPipelines})
@@ -388,4 +404,23 @@ func (p *Pipeline) PipelinesByLevelToOperations(pipelines [][]string) []Pipeline
 	}
 
 	return pipelineOperations
+}
+
+// Convert the pipelines sorted by levels into operations that can be used to execute the pipeline concurrently.
+func (p *Pipeline) PipelinesByLevelToOperations(pipelines [][]string) []PipelineOp {
+	p.Lock()
+	defer p.Unlock()
+	return p.pipelinesByLevelToOperationsNoLock(pipelines)
+}
+
+// Get the pipeline operations to be executed for the input pipeline.
+func (p *Pipeline) PipelineOperations(pipeline string) ([]PipelineOp, error) {
+	p.Lock()
+	defer p.Unlock()
+	pipelines := p.getNoLock(pipeline)
+	if pipelines == nil {
+		return []PipelineOp{}, fmt.Errorf("No pipeline operations found for pipeline: %s", pipeline)
+	}
+	return p.pipelinesByLevelToOperationsNoLock(pipelines), nil
+
 }

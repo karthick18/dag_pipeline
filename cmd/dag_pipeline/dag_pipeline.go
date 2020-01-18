@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/karthick18/dag_pipeline/internal/pkg/pipeline"
 	"math/rand"
 	"time"
+
+	"github.com/karthick18/dag_pipeline/internal/pkg/pipeline"
 )
 
 type DagConfig struct {
@@ -16,7 +17,10 @@ type DagConfig struct {
 }
 
 func testPipelineOp(dag_config map[string]DagConfig, pipelineInstance *pipeline.Pipeline, pipelineName string) {
-	ops := pipelineInstance.PipelinesByLevelToOperations(pipelineInstance.Get(pipelineName))
+	ops, err := pipelineInstance.PipelineOperations(pipelineName)
+	if err != nil {
+		panic(err.Error())
+	}
 	channelMap := map[string]chan bool{}
 	rand.Seed(time.Now().UnixNano())
 	// simulate the runtime of the pipeline
@@ -78,14 +82,13 @@ func testPipelineOp(dag_config map[string]DagConfig, pipelineInstance *pipeline.
 }
 
 func testPipeline(dag_config map[string]DagConfig, pipelineName string) {
-	pipelineInstance := pipeline.New()
+	var pipelineConfig []pipeline.PipelineConfig
 	for p, config := range dag_config {
-		pipelineInstance.SetOutputs(p, config.outputs)
+		pipelineConfig = append(pipelineConfig, pipeline.PipelineConfig{Name: p, Inputs: config.inputs, Outputs: config.outputs, Weight: config.weight})
 	}
-	for p, config := range dag_config {
-		if err := pipelineInstance.Add(p, config.inputs, config.outputs, config.weight); err != nil {
-			panic(err.Error())
-		}
+	pipelineInstance, err := pipeline.New(pipelineConfig)
+	if err != nil {
+		panic(err.Error())
 	}
 	pipelines := pipelineInstance.Get(pipelineName)
 	fmt.Println("Get pipeline", pipelineName, pipelines)
@@ -93,7 +96,7 @@ func testPipeline(dag_config map[string]DagConfig, pipelineName string) {
 		fmt.Printf("Pipeline %v at level %d\n", pipeline, index)
 	}
 	fmt.Println("--------")
-	fmt.Println("Testing pipeline operations")
+	fmt.Println("Testing pipeline operations to stop pipeline", pipelineName)
 	testPipelineOp(dag_config, pipelineInstance, pipelineName)
 }
 
@@ -123,9 +126,9 @@ func main() {
 	for p := range dag_config {
 		pipelines = append(pipelines, p)
 	}
-	pipelineName := "LEARNING_ML"
+	pipelineName := "STOP"
 	help_str := fmt.Sprintf("Specify pipeline name to test pipeline operation. Available pipelines %v", pipelines)
-	flag.StringVar(&pipelineName, "pipeline", "LEARNING_ML", help_str)
+	flag.StringVar(&pipelineName, "pipeline", pipelineName, help_str)
 	flag.Parse()
 	testPipeline(dag_config, pipelineName)
 }
