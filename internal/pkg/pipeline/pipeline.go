@@ -143,7 +143,8 @@ func (p *Pipeline) GetPipelines(inputs []string) ([]string, error) {
 	return pipelines, nil
 }
 
-func (p *Pipeline) checkIncomingVerticesForLoop(vertex *Vertex, loopDetect func(*Vertex, []string) error, visitedMap map[string]struct{}, path []string) error {
+func (p *Pipeline) checkIncomingVerticesForLoop(vertex *Vertex, loopDetect func(*Vertex, []string) error,
+	visitedMap map[string]struct{}, path []string) error {
 	if _, ok := visitedMap[vertex.name]; ok {
 		return nil
 	}
@@ -266,7 +267,16 @@ func (p *Pipeline) getOutputsFromVertex(v *Vertex, outgoingMap map[string]path) 
 	if _, ok := outgoingMap[v.name]; ok {
 		return
 	}
-	outgoingMap[v.name] = path{name: v.name, weight: v.weight, level: v.getLevel()}
+	// Map the vertex name to the pipeline name.
+	if pipelines, ok := p.pipelineMap[v.name]; ok {
+		for _, name := range pipelines {
+			// Pipeline has to exist in the vertex map.
+			vertex := p.verticesMap[name]
+			outgoingMap[name] = path{name: vertex.name, weight: vertex.weight, level: vertex.getLevel()}
+		}
+	} else {
+		outgoingMap[v.name] = path{name: v.name, weight: v.weight, level: v.getLevel()}
+	}
 	for _, o := range v.outgoing {
 		p.getOutputsFromVertex(o, outgoingMap)
 	}
@@ -314,13 +324,9 @@ func (p *Pipeline) getNoLock(pipeline string) [][]string {
 		for _, name := range names {
 			outputConnections := p.getOutputs(name)
 			if outputConnections != nil {
-				// Merge into connections by pipeline names.
+				// Merge into connections.
 				for k, v := range outputConnections {
-					if pipelines, ok := p.pipelineMap[k]; ok {
-						for _, name := range pipelines {
-							connections[name] = v
-						}
-					}
+					connections[k] = v
 				}
 			}
 		}

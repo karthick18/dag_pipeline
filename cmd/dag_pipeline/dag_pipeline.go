@@ -16,8 +16,8 @@ type DagConfig struct {
 	weight int
 }
 
-func testPipelineOp(dag_config map[string]DagConfig, pipelineInstance *pipeline.Pipeline, pipelineName string) {
-	ops, err := pipelineInstance.PipelineOperations(pipelineName)
+func testPipelineOp(pipelineInstance *pipeline.Pipeline, pipelineName string) {
+	pipelineOps, err := pipelineInstance.PipelineOperations(pipelineName)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -40,25 +40,10 @@ func testPipelineOp(dag_config map[string]DagConfig, pipelineInstance *pipeline.
 			if _, ok := channelMap[w]; !ok {
 				continue
 			}
-			//fmt.Println(name, "WAIT ON", w)
+			// fmt.Println(name, "WAIT ON", w)
 			// wait on them to close
 			<-channelMap[w]
 		}
-	}
-	//sanitize the pipelines to created pipelines (ignoring the fields)
-	pipelineOps := []pipeline.PipelineOp{}
-	for _, pipelineOp := range ops {
-		if _, ok := dag_config[pipelineOp.Name]; !ok {
-			continue
-		}
-		waitPipelines := []string{}
-		for _, waitPipeline := range pipelineOp.WaitPipelines {
-			if _, ok := dag_config[waitPipeline]; ok {
-				waitPipelines = append(waitPipelines, waitPipeline)
-			}
-		}
-		pipelineOp.WaitPipelines = waitPipelines
-		pipelineOps = append(pipelineOps, pipelineOp)
 	}
 	// create channels for all pipeline ops
 	for _, pipelineOp := range pipelineOps {
@@ -78,14 +63,23 @@ func testPipelineOp(dag_config map[string]DagConfig, pipelineInstance *pipeline.
 		}
 	}
 	// wait for pipeline completion
-	<-channelMap[pipelineName]
+	if _, ok := channelMap[pipelineName]; !ok {
+		// Should be a field. Get the pipelines mapped and wait on them.
+		pipelines, err := pipelineInstance.GetPipelines([]string{pipelineName})
+		if err != nil {
+			panic(err.Error())
+		}
+		for _, p := range pipelines {
+			if _, ok := channelMap[p]; ok {
+				<-channelMap[p]
+			}
+		}
+	} else {
+		<-channelMap[pipelineName]
+	}
 }
 
-func testPipeline(dag_config map[string]DagConfig, pipelineName string) {
-	var pipelineConfig []pipeline.PipelineConfig
-	for p, config := range dag_config {
-		pipelineConfig = append(pipelineConfig, pipeline.PipelineConfig{Name: p, Inputs: config.inputs, Outputs: config.outputs, Weight: config.weight})
-	}
+func testPipeline(pipelineConfig []pipeline.PipelineConfig, pipelineName string) {
 	pipelineInstance, err := pipeline.New(pipelineConfig)
 	if err != nil {
 		panic(err.Error())
@@ -97,38 +91,33 @@ func testPipeline(dag_config map[string]DagConfig, pipelineName string) {
 	}
 	fmt.Println("--------")
 	fmt.Println("Testing pipeline operations to stop pipeline", pipelineName)
-	testPipelineOp(dag_config, pipelineInstance, pipelineName)
+	testPipelineOp(pipelineInstance, pipelineName)
 }
 
 func main() {
-	dag_config := map[string]DagConfig{}
-	dag_config["FILE_IMPORTER"] = DagConfig{outputs: []string{"mac", "port", "vlan", "vsid", "type"}, inputs: []string{}}
-	dag_config["DHCP"] = DagConfig{outputs: []string{"dhcp_ip", "dhcp_hostname"},
-		inputs: []string{"mac"}}
-	dag_config["DNS"] = DagConfig{inputs: []string{"mac", "dhcp_ip"},
-		outputs: []string{"dns_hostname"}}
-	dag_config["VENDOR"] = DagConfig{outputs: []string{"vendor"},
-		inputs: []string{"mac"}}
-	dag_config["MAC_CAPTURE"] = DagConfig{outputs: []string{"mactable"},
-		inputs: []string{"mac"}}
-	dag_config["NESSUS"] = DagConfig{outputs: []string{"NONE_CVE", "CRITICAL_CVE", "MEDIUM_CVE", "INFO_CVE"},
-		inputs: []string{"dhcp_ip", "dhcp_hostname", "dns_hostname"}}
-	dag_config["NESSUS_HOST_NETWORK_SCAN"] = DagConfig{outputs: []string{"CRITICAL_NETWORK_RISK"},
-		inputs: []string{"dhcp_ip", "CRITICAL_CVE"}}
-	dag_config["LEARNING_ML"] = DagConfig{outputs: []string{"riskscore"},
-		inputs: []string{"mac", "dhcp_ip", "dhcp_hostname", "dns_hostname", "vendor", "vlan", "port", "mactable", "CRITICAL_NETWORK_RISK"}}
-	dag_config["STOP"] = DagConfig{outputs: []string{"db"},
-		inputs: []string{"LEARNING_ML"}}
-	// connect another node handling the same output with a higher weight
-	dag_config["VENDOR2"] = DagConfig{outputs: []string{"vendor"},
-		inputs: []string{"mac"}, weight: 10}
+	pipeline_config := []pipeline.PipelineConfig{
+		pipeline.PipelineConfig{Name: "FILE_IMPORTER", Outputs: []string{"mac", "port", "vlan", "vsid", "type"}, Inputs: []string{}},
+		pipeline.PipelineConfig{Name: "DHCP", Outputs: []string{"dhcp_ip", "dhcp_hostname"}, Inputs: []string{"mac"}},
+		pipeline.PipelineConfig{Name: "DNS", Inputs: []string{"mac", "dhcp_ip"}, Outputs: []string{"dns_hostname"}},
+		pipeline.PipelineConfig{Name: "VENDOR", Outputs: []string{"vendor"}, Inputs: []string{"mac"}},
+		pipeline.PipelineConfig{Name: "MAC_CAPTURE", Outputs: []string{"mactable"}, Inputs: []string{"mac"}},
+		pipeline.PipelineConfig{Name: "NESSUS", Outputs: []string{"NONE_CVE", "CRITICAL_CVE", "MEDIUM_CVE", "INFO_CVE"},
+			Inputs: []string{"dhcp_ip", "dhcp_hostname", "dns_hostname"}},
+		pipeline.PipelineConfig{Name: "NESSUS_HOST_NETWORK_SCAN", Outputs: []string{"CRITICAL_NETWORK_RISK"},
+			Inputs: []string{"dhcp_ip", "CRITICAL_CVE"}},
+		pipeline.PipelineConfig{Name: "LEARNING_ML", Outputs: []string{"riskscore"},
+			Inputs: []string{"mac", "dhcp_ip", "dhcp_hostname", "dns_hostname", "vendor", "vlan", "port", "mactable", "CRITICAL_NETWORK_RISK"}},
+		pipeline.PipelineConfig{Name: "STOP", Outputs: []string{"db"}, Inputs: []string{"LEARNING_ML"}},
+		// connect another node handling the same output with a higher weight
+		pipeline.PipelineConfig{Name: "VENDOR2", Outputs: []string{"vendor"}, Inputs: []string{"mac"}, Weight: 10},
+	}
 	pipelines := []string{}
-	for p := range dag_config {
-		pipelines = append(pipelines, p)
+	for _, p := range pipeline_config {
+		pipelines = append(pipelines, p.Name)
 	}
 	pipelineName := "STOP"
 	help_str := fmt.Sprintf("Specify pipeline name to test pipeline operation. Available pipelines %v", pipelines)
 	flag.StringVar(&pipelineName, "pipeline", pipelineName, help_str)
 	flag.Parse()
-	testPipeline(dag_config, pipelineName)
+	testPipeline(pipeline_config, pipelineName)
 }
